@@ -7,6 +7,7 @@ from custom_dataset import DecoderDataset
 from utils import *
 from torch import optim, nn
 import matplotlib.pyplot as plt
+import numpy as np
 
 class ComputeBenchmark:
     """
@@ -116,6 +117,14 @@ class ComputeBenchmark:
         plt.savefig("End_to_End_Benchmarking.png")
         plt.show()
 
+        avg_forward, std_forward = np.mean(forward_latency), np.std(forward_latency)
+        avg_backward, std_backward = np.mean(backward_latency), np.std(backward_latency)
+        avg_optimizer, std_optimizer = np.mean(optimizer_latency), np.std(optimizer_latency)
+        print(f"评测结果:")
+        print(f"Forward: 平均时延:{avg_forward} 标准差: {std_forward}")
+        print(f"Backward: 平均时延:{avg_backward} 标准差: {std_backward}")
+        print(f"Optimizer: 平均时延:{avg_optimizer} 标准差: {std_optimizer}")
+
 def _parse_args():
     """
     Command-line arguments to the system. --model switches between the main modes you'll need to use. The other arguments
@@ -139,6 +148,15 @@ def _parse_args():
 
 if __name__ == "__main__":
     args = _parse_args()
-    benchmark = ComputeBenchmark(args.vocab_size, args.d_model, args.num_layers, args.num_heads, args.d_ff)
-    #benchmark.get_model_size()
-    benchmark.time_profile(15)
+    # based on the assignment, the model sizes to evaluate have five tiers
+    model_size = {
+        "d_model":[768, 1024, 1280, 2560, 4608],
+        "num_layers":[12, 24, 36, 32, 50],
+        "num_heads":[12, 16, 20, 32, 36],
+        "d_ff":[3072, 4096, 5120, 10240, 12288],
+    }
+
+    for i in range(0, 5):
+        benchmark.get_model_size()
+        benchmark = ComputeBenchmark(args.vocab_size, model_size["d_model"][i],  model_size["num_layers"][i], model_size["num_heads"][i], model_size["d_ff"][i])
+        benchmark.time_profile(15)
