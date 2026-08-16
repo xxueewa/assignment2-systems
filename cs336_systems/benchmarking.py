@@ -1,7 +1,7 @@
 from cs336_basics.model import BasicsTransformerLM
 import timeit
 import torch
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import DataLoader
 import argparse
 from custom_dataset import DecoderDataset
 from utils import *
