@@ -69,7 +69,7 @@ class ComputeBenchmark:
             for char in vocab
         }
 
-        dataset = self.read_from("evaluation_train.txt")
+        dataset = self.read_from("cs336_systems/evaluation_train.txt")
         dataset = DecoderDataset(dataset, char_to_idx, args.max_length)
 
         train_loader = DataLoader(
@@ -95,7 +95,7 @@ class ComputeBenchmark:
             for batch_idx, (input_token, target_token) in enumerate(train_loader):
                 start_timestamp = timeit.default_timer()
                 input_token, target_token = input_token.to(device), target_token.to(device)
-                prob, _ = model(input_token)
+                prob = model(input_token)
                 loss = loss_fcn(prob.reshape(-1, prob.size(-1)), target_token.reshape(-1))
                 model.zero_grad()
                 forward_timestamp = timeit.default_timer()
@@ -103,14 +103,18 @@ class ComputeBenchmark:
                 backward_timestamp = timeit.default_timer()
                 optimizer.step()
                 optimizer_timestamp = timeit.default_timer()
-                loss_this_epoch += loss.item()
-                forward_latency.append(forward_timestamp)
+                forward_latency.append(forward_timestamp - start_timestamp)
+                backward_latency.append(backward_timestamp - forward_timestamp)
+                optimizer_latency.append(optimizer_timestamp - backward_timestamp)
         plt.plot(range(5, num_epochs + 1), forward_latency)
-
-
-
-
-
+        plt.plot(range(5, num_epochs + 1), backward_latency)
+        plt.plot(range(5, num_epochs + 1), optimizer_latency)
+        plt.legend(['forward', 'backward', 'optimizer'])
+        plt.xlabel('Epoch')
+        plt.ylabel('Latency')
+        plt.title("End-to-End Benchmarking")
+        plt.savefig("End_to_End_Benchmarking.png")
+        plt.show()
 
 def _parse_args():
     """
@@ -136,4 +140,5 @@ def _parse_args():
 if __name__ == "__main__":
     args = _parse_args()
     benchmark = ComputeBenchmark(args.vocab_size, args.d_model, args.num_layers, args.num_heads, args.d_ff)
-    benchmark.get_model_size()
+    #benchmark.get_model_size()
+    benchmark.time_profile(15)
