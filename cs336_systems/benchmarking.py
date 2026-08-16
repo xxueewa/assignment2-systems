@@ -10,10 +10,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 class ComputeBenchmark:
-    """
-    Scaling Law
-    观测区间通常在 5B 到 500B 个 Token
-    """
     def __init__(self, vocab_size: int, d_model: int, num_layers: int, num_heads: int, d_ff: int):
         self.vocab_size = vocab_size
         self.context_length = 512
