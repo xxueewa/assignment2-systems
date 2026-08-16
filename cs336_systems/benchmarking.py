@@ -89,41 +89,58 @@ class ComputeBenchmark:
 
         loss_fcn = nn.CrossEntropyLoss() 
         # 5 warm_up + 10 evaluation epochs
+        forward_metrics = []
+        backward_metrics = []
+        optimizer_metrics = []
         for t in range(num_epochs):
             forward_latency = []
             backward_latency = []
             optimizer_latency = []
             for batch_idx, (input_token, target_token) in enumerate(train_loader):
-                start_timestamp = timeit.default_timer()
+                
                 input_token, target_token = input_token.to(device), target_token.to(device)
+
+                start_timestamp = timeit.default_timer()
+                torch.cuda.nvtx.range_push("forward")
                 prob = model(input_token)
                 loss = loss_fcn(prob.reshape(-1, prob.size(-1)), target_token.reshape(-1))
+                torch.cuda.nvtx.range_pop()
                 model.zero_grad()
                 forward_timestamp = timeit.default_timer()
+
+                torch.cuda.nvtx.range_push("backward")
                 loss.backward()
+                torch.cuda.nvtx.range_pop()
                 backward_timestamp = timeit.default_timer()
+
+                torch.cuda.nvtx.range_push("optimizer")
                 optimizer.step()
+                torch.cuda.nvtx.range_pop()
                 optimizer_timestamp = timeit.default_timer()
+
                 forward_latency.append(forward_timestamp - start_timestamp)
                 backward_latency.append(backward_timestamp - forward_timestamp)
                 optimizer_latency.append(optimizer_timestamp - backward_timestamp)
-        plt.plot(range(5, num_epochs + 1), forward_latency)
-        plt.plot(range(5, num_epochs + 1), backward_latency)
-        plt.plot(range(5, num_epochs + 1), optimizer_latency)
+
+            avg_forward, std_forward = np.mean(forward_latency), np.std(forward_latency)
+            forward_metrics.append([avg_forward, std_forward])
+            avg_backward, std_backward = np.mean(backward_latency), np.std(backward_latency)
+            backward_metrics.append([avg_forward, std_forward])
+            avg_optimizer, std_optimizer = np.mean(optimizer_latency), np.std(optimizer_latency)
+            optimizer_metrics.append([avg_forward, std_forward])
+
+        plt.plot(range(5, num_epochs + 1), np.array(forward_metrics)[:, 0])
+        plt.plot(range(5, num_epochs + 1), np.array(forward_metrics)[:, 1])
+        plt.plot(range(5, num_epochs + 1), np.array(backward_metrics)[:, 0])
+        plt.plot(range(5, num_epochs + 1), np.array(backward_metrics)[:, 1])
+        plt.plot(range(5, num_epochs + 1), np.array(optimizer_metrics)[:, 0])
+        plt.plot(range(5, num_epochs + 1), np.array(optimizer_metrics)[:, 1])
         plt.legend(['forward', 'backward', 'optimizer'])
         plt.xlabel('Epoch')
         plt.ylabel('Latency')
         plt.title("End-to-End Benchmarking")
         plt.savefig("End_to_End_Benchmarking.png")
         plt.show()
-
-        avg_forward, std_forward = np.mean(forward_latency), np.std(forward_latency)
-        avg_backward, std_backward = np.mean(backward_latency), np.std(backward_latency)
-        avg_optimizer, std_optimizer = np.mean(optimizer_latency), np.std(optimizer_latency)
-        print(f"评测结果:")
-        print(f"Forward: 平均时延:{avg_forward} 标准差: {std_forward}")
-        print(f"Backward: 平均时延:{avg_backward} 标准差: {std_backward}")
-        print(f"Optimizer: 平均时延:{avg_optimizer} 标准差: {std_optimizer}")
 
 def _parse_args():
     """
@@ -157,6 +174,6 @@ if __name__ == "__main__":
     }
 
     for i in range(0, 5):
-        benchmark.get_model_size()
         benchmark = ComputeBenchmark(args.vocab_size, model_size["d_model"][i],  model_size["num_layers"][i], model_size["num_heads"][i], model_size["d_ff"][i])
+        benchmark.get_model_size()
         benchmark.time_profile(15)

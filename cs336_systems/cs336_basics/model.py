@@ -6,7 +6,6 @@ import math
 import os
 import warnings
 
-import einx
 import torch
 import torch.nn as nn
 from einops import einsum, rearrange
