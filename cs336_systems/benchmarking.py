@@ -172,4 +172,4 @@ if __name__ == "__main__":
     for i in range(0, 5):
         benchmark = ComputeBenchmark(args.vocab_size, model_size["d_model"][i],  model_size["num_layers"][i], model_size["num_heads"][i], model_size["d_ff"][i])
         benchmark.get_model_size()
-        benchmark.time_profile(15)
+        # benchmark.time_profile(15)
