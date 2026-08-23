@@ -72,34 +72,37 @@ def flash_fwd_kernel(
         strides=(stride_vk, stride_vd),
         offsets=(0, 0),
         block_shape=(K_TILE_SIZE, D),
-        order=()
+        order=(1, 0)
     )
 
     O_block_ptr = tl.make_block_ptr(
         O_ptr + batch_index * stride_ob,
         shape=(N_QUERIES, D),
         strides=(stride_oq, stride_od),
-        offsets=(0, 0),
-        block_shape=(K_TILE_SIZE, D),
-        order=()
+        offsets=(query_tile_index * Q_TILE_SIZE, 0),
+        block_shape=(Q_TILE_SIZE, D),
+        order=(1, 0)
     )
 
     L_block_ptr = tl.make_block_ptr(
         L_ptr + batch_index * stride_lb,
         shape=(N_QUERIES,),
         strides=(stride_lq,),
-        offsets=(0),
+        offsets=(query_tile_index * Q_TILE_SIZE, ),
         block_shape=(Q_TILE_SIZE, ),
-        order=()
+        order=(0,)
     )
 
     q_tile = tl.load(Q_block_ptr, boundary_check=(0,), padding_option="zero") # idx, (ROWS_TILE_SIZE, D_TILE_SIZE)
     output = tl.zeros((Q_TILE_SIZE, D), dtype=tl.float32)
+    output_tile = tl.zeros((Q_TILE_SIZE, D), dtype=tl.float32)
     expl = tl.zeros((Q_TILE_SIZE, ), dtype=tl.float32)
     m = tl.full((Q_TILE_SIZE,), -float("inf"), dtype=tl.float32)
     for key_tile_index in range(0, tl.cdiv(N_KEYS, K_TILE_SIZE)):
         k_tile = tl.load(K_block_ptr, boundary_check=(0,), padding_option="zero") # (D_TILE_SIZE,)
         v_tile = tl.load(V_block_ptr, boundary_check=(0,), padding_options="zero") 
+
+        score = tl.dot(q_tile, k_tile.trans())
 
         q_offsets = query_tile_index * Q_TILE_SIZE + tl.arange(0, Q_TILE_SIZE)
         k_offsets = key_tile_index * K_TILE_SIZE + tl.arange(0, K_TILE_SIZE)
@@ -109,13 +112,16 @@ def flash_fwd_kernel(
         if IS_CAUSAL:
             score = tl.where(q_offsets[:, None] >= k_offsets[None, :], score, -1e6)
 
-        score = tl.dot(score, scale)
+        score = score * scale
         m_prev = m
         m = tl.maximum(m, tl.max(score, axis=1))
         p_tile = tl.exp(score - m)
         alpha = tl.exp(m_prev - m)
         expl = alpha * expl + tl.sum(p_tile, axis=1)
         output_tile = alpha[:, None] * output_tile + tl.dot(p_tile, v_tile)
+
+        K_block_ptr = K_block_ptr.advance((K_TILE_SIZE, 0))
+        V_block_ptr = V_block_ptr.advance((K_TILE_SIZE, 0))
 
     factor = tl.exp(expl, -1)
     output = factor @ output_tile
