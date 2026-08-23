@@ -61,7 +61,7 @@ def flash_fwd_kernel(
         K_ptr + batch_index * stride_kb,
         shape=(N_KEYS, D),
         strides=(stride_kk, stride_kd),
-        offsets=(key_tile_index * K_TILE_SIZE, 0),
+        offsets=(0, 0),
         block_shape=(K_TILE_SIZE, D),
         order=(1, 0)
     )
@@ -70,25 +70,25 @@ def flash_fwd_kernel(
         V_ptr + batch_index * stride_vb,
         shape=(N_KEYS, D),
         strides=(stride_vk, stride_vd),
-        offsets=(key_tile_index * K_TILE_SIZE, 0),
+        offsets=(0, 0),
         block_shape=(K_TILE_SIZE, D),
         order=()
     )
 
     O_block_ptr = tl.make_block_ptr(
         O_ptr + batch_index * stride_ob,
-        shape=(N_KEYS, D),
+        shape=(N_QUERIES, D),
         strides=(stride_oq, stride_od),
-        offsets=(key_tile_index * K_TILE_SIZE, 0),
+        offsets=(0, 0),
         block_shape=(K_TILE_SIZE, D),
         order=()
     )
 
     L_block_ptr = tl.make_block_ptr(
         L_ptr + batch_index * stride_lb,
-        shape=(N_QUERIES, D),
-        strides=(stride_lq, ),
-        offsets=(query_tile_index * Q_TILE_SIZE, 0),
+        shape=(N_QUERIES,),
+        strides=(stride_lq,),
+        offsets=(0),
         block_shape=(Q_TILE_SIZE, ),
         order=()
     )
@@ -109,12 +109,13 @@ def flash_fwd_kernel(
         if IS_CAUSAL:
             score = tl.where(q_offsets[:, None] >= k_offsets[None, :], score, -1e6)
 
+        score = tl.dot(score, scale)
         m_prev = m
         m = tl.maximum(m, tl.max(score, axis=1))
         p_tile = tl.exp(score - m)
-        alpha = tl.exp(m_prev, m)
-        expl = alpha @ expl + tl.sum(p_tile, axis=1)
-        output_tile = alpha[:, None] @ output_tile + tl.dot(p_tile, v_tile)
+        alpha = tl.exp(m_prev - m)
+        expl = alpha * expl + tl.sum(p_tile, axis=1)
+        output_tile = alpha[:, None] * output_tile + tl.dot(p_tile, v_tile)
 
     factor = tl.exp(expl, -1)
     output = factor @ output_tile
@@ -123,7 +124,7 @@ def flash_fwd_kernel(
     tl.store(O_block_ptr, output, boundary_check=(0, 1))
     tl.store(L_block_ptr, expsum, boundary_check=(0, 1))
     
-def flash_backward_torch(q, k, v, o, L, do, is_causal):
+def flash_backward_torch(q, k, v, L, do, is_causal):
     d = q.shape[-1]
     S = q @ k.transpose(-2, -1) / math.sqrt(d)
 
@@ -134,7 +135,7 @@ def flash_backward_torch(q, k, v, o, L, do, is_causal):
         S = torch.where(mask, S, -1e6)
 
     P = torch.exp(S - L.unsqueeze(-1))
-
+    o = P @ v
     D = (o * do).sum(dim=-1)
     dV = P.transpose(-2, -1) @ do
     dP = do @ v.transpose(-2, -1)
@@ -150,7 +151,7 @@ class MyTritonFlashAttentionAutogradFunctionClass(torch.autograd.Function):
 
         ctx.save_for_backward(q, k, v)
         output, L = flash_fwd_kernel()
-        ctx.save_for_backward(output, L)
+        ctx.save_for_backward(L)
         ctx.is_causal = is_causal
 
         return output, L
@@ -158,7 +159,7 @@ class MyTritonFlashAttentionAutogradFunctionClass(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, grad_out):
-        q, k, v, o, L = ctx.saved_tensors
+        q, k, v, L = ctx.saved_tensors
         is_causal = ctx.is_causal
         compiled_flash_backward_torch = torch.compile(flash_backward_torch)
 
