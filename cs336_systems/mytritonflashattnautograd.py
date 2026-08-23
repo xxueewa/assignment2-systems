@@ -123,9 +123,26 @@ def flash_fwd_kernel(
     tl.store(O_block_ptr, output, boundary_check=(0, 1))
     tl.store(L_block_ptr, expsum, boundary_check=(0, 1))
     
+def flash_backward_torch(q, k, v, o, L, do, is_causal):
+    d = q.shape[-1]
+    S = q @ k.transpose(-2, -1) / math.sqrt(d)
 
-# @triton.jit
-# def flash_backward_kernel():
+    if is_causal:
+        n_queries = q.shape[-2]
+        n_keys = k.shape[-2]
+        mask = torch.arange(n_queries, device=q.device)[:, None] >= torch.arange(n_keys, device=q.device)[None, :]
+        S = torch.where(mask, S, -1e6)
+
+    P = torch.exp(S - L.unsqueeze(-1))
+
+    D = (o * do).sum(dim=-1)
+    dV = P.transpose(-2, -1) @ do
+    dP = do @ v.transpose(-2, -1)
+    dS = P * (dP - D.unsqueeze(-1))
+    dQ = dS @ k / math.sqrt(d)
+    dK = dS.transpose(-2, -1) @ q / math.sqrt(d)
+
+    return dQ, dK, dV
     
 class MyTritonFlashAttentionAutogradFunctionClass(torch.autograd.Function):
     @staticmethod
@@ -139,5 +156,12 @@ class MyTritonFlashAttentionAutogradFunctionClass(torch.autograd.Function):
         return output, L
 
 
-    # @staticmethod
-    # def backward(ctx, grad_out):
+    @staticmethod
+    def backward(ctx, grad_out):
+        q, k, v, o, L = ctx.saved_tensors
+        is_causal = ctx.is_causal
+        compiled_flash_backward_torch = torch.compile(flash_backward_torch)
+
+        dq, dk, dv = compiled_flash_backward_torch(q, k, v, o, L, grad_out, is_causal)
+
+        return dq, dk, dv, None
